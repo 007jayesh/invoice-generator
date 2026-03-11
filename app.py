@@ -351,6 +351,7 @@ if st.session_state.get("invoice_pdf"):
             mime="application/pdf",
             type="primary",
             use_container_width=True,
+            key="dl_upload_flow",
         )
     with dl_col2:
         with st.expander("View Extracted Invoice Data"):
@@ -478,6 +479,12 @@ if submitted:
         with st.spinner("Generating invoice with AI (GPT-5.4)..."):
             try:
                 invoice_data = structure_invoice_with_ai(po_data)
+
+                # Override supplier/buyer with original form values so PDF is accurate
+                invoice_data["supplier"] = po_data["supplier"]
+                invoice_data["buyer"] = po_data["buyer"]
+                invoice_data["shipping_address"] = po_data["shipping_address"]
+
                 st.success("Invoice structured successfully!")
 
                 # Show preview
@@ -494,6 +501,7 @@ if submitted:
                     mime="application/pdf",
                     type="primary",
                     use_container_width=True,
+                    key="dl_manual_flow",
                 )
 
                 st.balloons()
