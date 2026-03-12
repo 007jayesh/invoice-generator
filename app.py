@@ -254,24 +254,53 @@ def file_to_base64_images(uploaded_file) -> list[str]:
     return images
 
 
-def extract_po_from_file(uploaded_file) -> dict:
-    """Use GPT-5.4 vision to extract PO data from an uploaded image/PDF."""
+def extract_and_generate_invoice_from_file(uploaded_file) -> dict:
+    """Use GPT-5.4 vision to extract PO data and generate invoice JSON in a single call."""
     images_b64 = file_to_base64_images(uploaded_file)
 
+    today = datetime.today()
+    today_str = today.strftime("%d/%m/%Y")
+
     content_parts = [
-        {"type": "text", "text": """Extract ALL Purchase Order information from this document and return a JSON object with these exact keys:
-{
-  "po_number": "",
-  "order_date": "DD/MM/YYYY",
-  "expected_arrival": "DD/MM/YYYY",
-  "payment_terms": "",
-  "buyer_department": "",
-  "buyer": {"name": "", "address": "", "gstin": "", "phone": ""},
-  "supplier": {"name": "", "address": "", "gstin": "", "phone": ""},
-  "shipping_address": "",
-  "line_items": [{"description": "", "qty": 0, "unit_price": 0, "discount_pct": 0, "tax_pct": 18}]
-}
-Return ONLY the JSON, no markdown, no extra text. Use empty strings for missing fields."""}
+        {"type": "text", "text": f"""Extract ALL Purchase Order information from this document and generate a complete invoice JSON.
+Today's date is {today_str}.
+
+Return a JSON object with these exact keys:
+{{
+  "po_data": {{
+    "po_number": "",
+    "order_date": "DD/MM/YYYY",
+    "expected_arrival": "DD/MM/YYYY",
+    "payment_terms": "",
+    "buyer_department": "",
+    "buyer": {{"name": "", "address": "", "gstin": "", "phone": ""}},
+    "supplier": {{"name": "", "address": "", "gstin": "", "phone": ""}},
+    "shipping_address": "",
+    "line_items": [{{"description": "", "qty": 0, "unit_price": 0, "discount_pct": 0, "tax_pct": 18}}]
+  }},
+  "invoice": {{
+    "invoice_number": "INV-<generate a sequential number>",
+    "invoice_date": "{today_str}",
+    "due_date": "<based on payment terms from PO>",
+    "po_reference": "<PO number from document>",
+    "payment_terms": "<from document>",
+    "supplier": {{"name": "", "address": "", "gstin": "", "phone": ""}},
+    "buyer": {{"name": "", "address": "", "gstin": "", "phone": ""}},
+    "shipping_address": "<shipping address as a single string>",
+    "line_items": [
+      {{"description": "", "qty": 0, "unit_price": 0, "discount_pct": 0, "tax_pct": 18}}
+    ],
+    "untaxed_amount": 0,
+    "tax_amount": 0,
+    "total_amount": 0,
+    "notes": "Thank you for your business."
+  }}
+}}
+
+IMPORTANT:
+- Return ONLY the JSON object, no markdown, no extra text.
+- Calculate all amounts correctly: untaxed = sum of (qty * unit_price * (1 - discount/100)), tax = sum of (line_untaxed * tax_pct/100), total = untaxed + tax.
+- Use empty strings for missing fields."""}
     ]
 
     for img_b64 in images_b64:
@@ -312,25 +341,46 @@ uploaded_po = st.file_uploader(
 )
 
 if uploaded_po and st.button("Extract & Generate Invoice", type="primary"):
-    with st.spinner("Step 1/3: Extracting PO data from file using GPT-5.4 Vision..."):
+    with st.spinner("Step 1/2: Extracting PO & generating invoice with GPT-5.4 Vision..."):
         try:
-            extracted = extract_po_from_file(uploaded_po)
+            result = extract_and_generate_invoice_from_file(uploaded_po)
+            extracted = result.get("po_data", {})
+            invoice_data = result.get("invoice", {})
+
             st.session_state.po_extracted = extracted
-            st.success("PO data extracted successfully!")
-        except Exception as e:
-            st.error(f"Failed to extract PO data: {e}")
-            st.stop()
-
-    with st.spinner("Step 2/3: Structuring invoice with AI..."):
-        try:
-            invoice_data = structure_invoice_with_ai(extracted)
             st.session_state.invoice_data = invoice_data
-            st.success("Invoice structured successfully!")
+
+            # Update line item widget keys so form fields pick up extracted values
+            ext_line_items = extracted.get("line_items", [])
+            for idx, item in enumerate(ext_line_items):
+                st.session_state[f"desc_{idx}"] = item.get("description", "")
+                st.session_state[f"qty_{idx}"] = float(item.get("qty", 1.0))
+                st.session_state[f"price_{idx}"] = float(item.get("unit_price", 0.0))
+                st.session_state[f"disc_{idx}"] = float(item.get("discount_pct", 0.0))
+                tax_val = int(item.get("tax_pct", 18))
+                if tax_val in [0, 5, 12, 18, 28]:
+                    st.session_state[f"tax_{idx}"] = tax_val
+
+            # Update buyer/supplier widget keys too
+            ext_b = extracted.get("buyer", {})
+            ext_s = extracted.get("supplier", {})
+            if ext_b.get("name"):
+                st.session_state["buyer_co"] = ext_b.get("name", "")
+                st.session_state["buyer_addr"] = ext_b.get("address", "")
+                st.session_state["buyer_gstin"] = ext_b.get("gstin", "")
+                st.session_state["buyer_phone"] = ext_b.get("phone", "")
+            if ext_s.get("name"):
+                st.session_state["supp_co"] = ext_s.get("name", "")
+                st.session_state["supp_addr"] = ext_s.get("address", "")
+                st.session_state["supp_gstin"] = ext_s.get("gstin", "")
+                st.session_state["supp_phone"] = ext_s.get("phone", "")
+
+            st.success("PO extracted & invoice generated in a single AI call!")
         except Exception as e:
-            st.error(f"Failed to structure invoice: {e}")
+            st.error(f"Failed to extract and generate invoice: {e}")
             st.stop()
 
-    with st.spinner("Step 3/3: Generating PDF..."):
+    with st.spinner("Step 2/2: Generating PDF..."):
         pdf_bytes = generate_invoice_pdf(invoice_data)
         st.session_state.invoice_pdf = pdf_bytes
         st.session_state.invoice_filename = f"Invoice_{invoice_data.get('invoice_number', 'INV')}.pdf"
