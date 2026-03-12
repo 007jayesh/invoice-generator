@@ -352,6 +352,7 @@ if uploaded_po and st.button("Extract & Generate Invoice", type="primary"):
 
             # Update line item widget keys so form fields pick up extracted values
             ext_line_items = extracted.get("line_items", [])
+            st.session_state["num_line_items"] = max(len(ext_line_items), 1)
             for idx, item in enumerate(ext_line_items):
                 st.session_state[f"desc_{idx}"] = item.get("description", "")
                 st.session_state[f"qty_{idx}"] = float(item.get("qty", 1.0))
@@ -415,6 +416,21 @@ ext_items = ext.get("line_items", [])
 st.divider()
 st.markdown("**Or fill in details manually below:**")
 
+# --- Line item count (outside form so changes apply immediately) ---
+default_num_items = max(len(ext_items), 1)
+if "num_line_items" not in st.session_state:
+    st.session_state.num_line_items = default_num_items
+
+num_items = st.number_input(
+    "Number of line items", min_value=1, max_value=20,
+    value=st.session_state.num_line_items, key="num_line_items",
+)
+
+# Clean up session state keys for removed line items
+for i in range(int(num_items), 20):
+    for prefix in ("desc_", "qty_", "price_", "disc_", "tax_"):
+        st.session_state.pop(f"{prefix}{i}", None)
+
 # --- Manual Form (pre-filled if extracted) ---
 with st.form("po_form"):
     st.subheader("Purchase Order Info")
@@ -464,13 +480,11 @@ with st.form("po_form"):
 
     # Line items
     st.subheader("Line Items")
-    default_num_items = max(len(ext_items), 1)
-    num_items = st.number_input("Number of line items", min_value=1, max_value=20, value=default_num_items)
 
     TAX_OPTIONS = [0, 5, 12, 18, 28]
 
     items = []
-    for i in range(int(num_items)):
+    for i in range(int(st.session_state.get("num_line_items", max(len(ext_items), 1)))):
         st.markdown(f"**Item {i + 1}**")
         ei = ext_items[i] if i < len(ext_items) else {}
         ic1, ic2, ic3, ic4, ic5 = st.columns([3, 1, 1, 1, 1])
